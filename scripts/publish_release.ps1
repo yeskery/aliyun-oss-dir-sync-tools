@@ -50,11 +50,13 @@ $releaseBody = @"
 - **带有效期与签名的外网直链复制**：支持私有 Bucket 生成防盗链临时授权 URL 与 CDN 加速链接。
 
 ### 📦 各平台下载解压即用
-- **Windows 桌面版 (纯GUI无黑框)**: aliyun-oss-sync.exe
-- **macOS Apple Silicon (M1/M2/M3/M4)**: aliyun-oss-sync-darwin-arm64
-- **macOS Intel (x86_64)**: aliyun-oss-sync-darwin-amd64
-- **Linux 64位服务器版 (x86_64)**: aliyun-oss-sync-linux-amd64
-- **Linux ARM64 服务器版**: aliyun-oss-sync-linux-arm64
+- **Windows 桌面版 (含橙色图标，纯GUI无黑框)**: `aliyun-oss-sync.exe`
+- **macOS Apple Silicon 桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-arm64.zip`
+- **macOS Intel 芯片桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-intel.zip`
+- **Linux 64位桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-amd64.tar.gz`
+- **Linux ARM64 桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-arm64.tar.gz`
+- **macOS 命令行原生程序**: `aliyun-oss-sync-darwin-arm64` / `aliyun-oss-sync-darwin-amd64`
+- **Linux 命令行原生程序**: `aliyun-oss-sync-linux-amd64` / `aliyun-oss-sync-linux-arm64`
 "@
 
 $createReleasePayload = @{
@@ -76,6 +78,10 @@ Write-Host "📤 [3/3] 正在上传各平台可执行文件至 Releases..." -For
 
 $assets = @(
     "release/aliyun-oss-sync.exe",
+    "release/Aliyun-OSS-Sync-macOS-arm64.zip",
+    "release/Aliyun-OSS-Sync-macOS-intel.zip",
+    "release/Aliyun-OSS-Sync-linux-amd64.tar.gz",
+    "release/Aliyun-OSS-Sync-linux-arm64.tar.gz",
     "release/aliyun-oss-sync-darwin-arm64",
     "release/aliyun-oss-sync-darwin-amd64",
     "release/aliyun-oss-sync-linux-amd64",

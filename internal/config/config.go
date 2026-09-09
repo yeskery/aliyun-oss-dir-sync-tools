@@ -62,10 +62,38 @@ func NewDefaultConfig() AppConfig {
 	}
 }
 
+// ResolveConfigPath 解析实际生效的配置文件存储路径
+func ResolveConfigPath(filePath string) string {
+	if filePath != "config.json" && filePath != "" {
+		return filePath
+	}
+	// 1. 如果当前工作目录下已存在 config.json，则优先使用它
+	if _, err := os.Stat("config.json"); err == nil {
+		return "config.json"
+	}
+	// 2. 检查程序同级目录下是否已有 config.json 或位于 macOS .app 包内
+	if exePath, err := os.Executable(); err == nil {
+		if resolved, err := filepath.EvalSymlinks(exePath); err == nil {
+			exePath = resolved
+		}
+		// 如果运行在 macOS App Bundle 中 (如 .../Contents/MacOS/...)
+		if strings.Contains(exePath, ".app/Contents/MacOS") {
+			if ucd, err := os.UserConfigDir(); err == nil {
+				return filepath.Join(ucd, "aliyun-oss-sync", "config.json")
+			}
+		}
+		// 默认存放在可执行文件所在同级目录下（绿色便携模式）
+		exeDir := filepath.Dir(exePath)
+		return filepath.Join(exeDir, "config.json")
+	}
+	return filePath
+}
+
 // NewConfigManager 创建配置管理器
 func NewConfigManager(filePath string) (*ConfigManager, error) {
+	resolvedPath := ResolveConfigPath(filePath)
 	cm := &ConfigManager{
-		filePath: filePath,
+		filePath: resolvedPath,
 		config:   NewDefaultConfig(),
 	}
 

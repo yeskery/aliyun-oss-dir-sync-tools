@@ -29,6 +29,13 @@ GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o release/aliyun-oss-sync-lin
 echo "📦 正在编译 Linux arm64..."
 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o release/aliyun-oss-sync-linux-arm64 .
 
+# 6. 打包 macOS / Linux 桌面与图标包
+if command -v python3 &>/dev/null; then
+    echo "📦 正在打包 macOS App (.app.zip) 与 Linux 桌面分发包 (.tar.gz)..."
+    python3 scripts/package_desktop.py || true
+fi
+
 echo "===================================================="
 echo "✅ 全部平台编译成功！生成文件位于 release/ 目录下:"
 ls -lh release/
+

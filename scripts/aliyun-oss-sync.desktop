@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Aliyun OSS Sync
+Name[zh_CN]=阿里云OSS双端同步工作台
+Comment=Aliyun OSS Dual-Bucket Directory Synchronization Tool
+Exec=aliyun-oss-sync
+Icon=aliyun-oss-sync
+Terminal=false
+Categories=Utility;Development;FileTools;

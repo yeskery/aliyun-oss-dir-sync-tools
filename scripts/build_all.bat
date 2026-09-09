@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 >nul
 echo ====================================================
 echo   一键跨平台打包: 阿里云 OSS 双向目录同步工作台
@@ -66,6 +66,15 @@ if %ERRORLEVEL% equ 0 (
 :: 恢复默认系统变量
 set GOOS=
 set GOARCH=
+
+echo.
+echo [桌面打包] 正在打包 macOS App (.app.zip) 与 Linux 桌面分发包 (.tar.gz)...
+python scripts\package_desktop.py
+if %ERRORLEVEL% equ 0 (
+    echo [成功] 桌面应用包打包完成!
+) else (
+    echo [提示] 未安装 Python 或缺少 Pillow，跳过 macOS/Linux 桌面应用打包。
+)
 
 echo.
 echo ====================================================
