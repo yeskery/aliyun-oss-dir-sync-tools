@@ -1,0 +1,29 @@
+{
+  "bucket_a": {
+    "name": "源端 (Bucket A)",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "access_key_id": "YOUR_ACCESS_KEY_ID",
+    "access_key_secret": "YOUR_ACCESS_KEY_SECRET",
+    "security_token": "",
+    "auth_type": "ak",
+    "bucket_name": "your-bucket-a-name",
+    "cdn_domain": ""
+  },
+  "bucket_b": {
+    "name": "目标端 (Bucket B)",
+    "endpoint": "oss-cn-hangzhou.aliyuncs.com",
+    "access_key_id": "YOUR_ACCESS_KEY_ID",
+    "access_key_secret": "YOUR_ACCESS_KEY_SECRET",
+    "security_token": "",
+    "auth_type": "ak",
+    "bucket_name": "your-bucket-b-name",
+    "cdn_domain": ""
+  },
+  "sync_dirs": [
+    "images/",
+    "static/"
+  ],
+  "interval_seconds": 5,
+  "auto_start": false,
+  "sync_mode": "bidirectional"
+}

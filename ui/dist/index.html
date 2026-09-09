@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>阿里云 OSS 双 Bucket 可视化文件工作台</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-wrapper">
+
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="nav-brand">
+        <div class="brand-icon">
+          <img src="icon.png" alt="OSS Sync Master Logo">
+        </div>
+        <div class="brand-title">
+          <h1>OSS 双 Bucket 可视化文件工作台</h1>
+          <p>源端 ⇋ 目标端 双端并发上传覆盖 · 实时同步删除</p>
+        </div>
+      </div>
+
+      <div class="nav-tools">
+        <span id="status-badge" class="status-badge status-DIFF">检查连接中...</span>
+        <button id="btn-settings" class="btn btn-secondary">⚙️ 存储桶设置</button>
+        <button id="btn-refresh" class="btn btn-secondary" title="刷新当前目录 (快捷键: F5)"><span class="refresh-icon">🔄</span> 刷新</button>
+        <button id="btn-new-dir" class="btn btn-secondary">📁 新建目录</button>
+        <button id="btn-upload" class="btn btn-primary">⬆️ 上传文件</button>
+        <input type="file" id="file-input" multiple style="display: none;">
+      </div>
+    </header>
+
+    <!-- Sub Navigation / Breadcrumbs & Search -->
+    <nav class="sub-nav">
+      <div id="breadcrumbs" class="breadcrumbs">
+        <span class="breadcrumb-item active">根目录</span>
+      </div>
+
+      <div class="sub-tools">
+        <button type="button" id="btn-copy-curr-dir" class="btn btn-secondary btn-copy-curr-dir" title="复制当前目录完整路径">
+          📋 复制路径
+        </button>
+        <button type="button" id="btn-refresh-dir" class="btn btn-secondary btn-refresh-dir" title="刷新当前目录 (快捷键: F5)">
+          <span class="refresh-icon">🔄</span> 刷新
+        </button>
+        <button type="button" id="btn-delete-curr-dir" class="btn btn-danger btn-delete-curr-dir" title="删除当前所在文件夹 (双端同步)" style="display: none;">
+          🗑️ 删除本目录
+        </button>
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="🔍 搜索当前目录文件...">
+        </div>
+        <div class="view-toggle-group">
+          <button type="button" id="btn-view-grid" class="view-toggle-btn active" title="网格卡片视图">🔲 网格</button>
+          <button type="button" id="btn-view-list" class="view-toggle-btn" title="表格列表视图">📋 列表</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- 凭据过期/失效全局警示横幅 (支持一键重新唤起登录刷新) -->
+    <div id="relogin-banner" class="relogin-banner" style="display: none;">
+      <div class="relogin-banner-left">
+        <span class="relogin-icon">⚠️</span>
+        <div class="relogin-text-box">
+          <span class="relogin-title">阿里云访问凭据已过期或失效</span>
+          <span id="relogin-msg" class="relogin-desc">检测到 STS 临时凭证已到期（有效约 6 小时），请点击右侧按钮重新登录以恢复双端文件管理</span>
+        </div>
+      </div>
+      <div class="relogin-banner-right">
+        <button type="button" id="banner-btn-login-a" class="btn btn-sm btn-primary">🔗 重新登录 Bucket A</button>
+        <button type="button" id="banner-btn-login-b" class="btn btn-sm btn-primary">🔗 重新登录 Bucket B</button>
+        <button type="button" id="banner-btn-settings" class="btn btn-sm btn-secondary">⚙️ 前往设置</button>
+        <button type="button" id="banner-btn-close" class="btn btn-sm btn-secondary" title="暂时忽略">✕</button>
+      </div>
+    </div>
+
+    <!-- Main Workspace Area (Drop Target) -->
+    <main id="workspace-area" class="workspace-area">
+
+      <!-- Drag & Drop Overlay Indicator -->
+      <div id="drop-overlay" class="drop-overlay">
+        <div class="drop-overlay-icon">📥</div>
+        <div class="drop-overlay-text">
+          <h2>释放鼠标立即双端上传并覆盖</h2>
+          <p id="drop-target-name">当前目标目录: [ images/ ]</p>
+          <p style="font-size:12px; color:var(--text-muted); margin-top:6px;">将同时并发写入 Bucket A 与 Bucket B 相同路径</p>
+        </div>
+      </div>
+
+      <!-- Folders Section -->
+      <section id="folders-section" class="folders-section" style="display: none;">
+        <span class="section-label">📂 目录 (FOLDERS)</span>
+        <div id="folders-grid" class="folders-grid"></div>
+      </section>
+
+      <!-- Files Section -->
+      <section id="files-section" class="files-section" style="display: none;">
+        <span class="section-label" id="files-section-label">📄 文件列表 (FILES)</span>
+        <!-- Grid View -->
+        <div id="files-grid" class="files-grid"></div>
+        <!-- List View -->
+        <div id="files-list-container" class="files-list-container" style="display: none;">
+          <table class="files-table">
+            <thead>
+              <tr>
+                <th style="width: 48px;"></th>
+                <th>文件名 / 对象 Key</th>
+                <th style="width: 120px;">状态</th>
+                <th style="width: 90px;">大小</th>
+                <th style="width: 150px;">更新时间</th>
+                <th style="width: 240px; text-align: right;">操作</th>
+              </tr>
+            </thead>
+            <tbody id="files-table-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Empty State -->
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <span class="empty-state-icon">📥</span>
+        <h3>当前目录为空</h3>
+        <p>可直接从电脑中<strong>拖拽图片或文件到此处</strong>立即双端上传并覆盖！</p>
+      </div>
+
+    </main>
+
+  </div>
+
+  <!-- Settings Modal Dialog -->
+  <div id="modal-config" class="modal-backdrop">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2>⚙️ 存储桶凭证与同步目录白名单配置</h2>
+        <button id="btn-close-config" class="btn-close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <!-- Bucket Credentials Grid -->
+        <div class="config-grid">
+
+          <!-- Bucket A (源端) -->
+          <div class="config-card">
+            <div class="config-card-header">
+              <span>📦 Bucket A (源端)</span>
+            </div>
+
+            <!-- 认证模式切换 -->
+            <div class="auth-tabs" id="tabs-a">
+              <button type="button" class="auth-tab-btn active" data-which="a" data-tab="ak">🔑 AK 密钥</button>
+              <button type="button" class="auth-tab-btn" data-which="a" data-tab="account">👤 账号登录</button>
+              <button type="button" class="auth-tab-btn" data-which="a" data-tab="code">📋 授权码</button>
+            </div>
+
+            <!-- Tab 1: AK 登录 -->
+            <div id="pane-a-ak" class="auth-pane active">
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-a" placeholder="例如: oss-cn-hangzhou.aliyuncs.com">
+              </div>
+              <div class="form-group">
+                <label>AccessKey ID</label>
+                <input type="text" id="ak-a" placeholder="阿里云 AccessKey ID" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label>AccessKey Secret</label>
+                <div class="input-with-action">
+                  <input type="password" id="sk-a" placeholder="阿里云 AccessKey Secret" autocomplete="off">
+                  <button type="button" id="toggle-sk-a" class="btn btn-secondary btn-sm">👁️</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <input type="text" id="bucket-a" placeholder="例如: my-source-bucket">
+              </div>
+            </div>
+
+            <!-- Tab 2: 账号登录 (免 AK / RAM 子账号 / 扫码) -->
+            <div id="pane-a-account" class="auth-pane">
+              <div class="auth-status-card">
+                <div class="auth-status-header">
+                  <span id="account-status-badge-a" class="status-badge status-DIFF">等待发起登录</span>
+                  <button type="button" id="btn-open-login-a" class="btn btn-primary btn-sm">🔗 打开阿里云登录窗口</button>
+                </div>
+                <p id="account-status-msg-a" class="auth-status-tip">支持 RAM 子账号密码、钉钉/微信/阿里云 App 扫码登录，完成后自动捕获并解密临时访问凭证。</p>
+              </div>
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-a-acc" placeholder="例如: oss-cn-hangzhou.aliyuncs.com" value="oss-cn-hangzhou.aliyuncs.com">
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <div class="input-with-action">
+                  <input type="text" id="bucket-a-acc" placeholder="输入 Bucket 名称或点击右侧获取">
+                  <button type="button" id="btn-list-buckets-a" class="btn btn-secondary btn-sm" title="读取该账号下所有 Bucket">🔍 获取列表</button>
+                </div>
+                <select id="bucket-select-a" class="select-bucket-dropdown" style="display:none; margin-top:4px;"></select>
+              </div>
+            </div>
+
+            <!-- Tab 3: 授权码登录 -->
+            <div id="pane-a-code" class="auth-pane">
+              <div class="form-group">
+                <label>粘贴阿里云授权码 (Base64 或 JSON)</label>
+                <textarea id="authcode-input-a" class="auth-code-input" placeholder="在此粘贴在 oss-browser 或阿里云控制台生成的授权码..."></textarea>
+                <button type="button" id="btn-parse-code-a" class="btn btn-secondary btn-sm" style="margin-top:4px;">⚡ 解析并填充</button>
+              </div>
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-a-code" placeholder="自动解析回显">
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <input type="text" id="bucket-a-code" placeholder="自动解析回显">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 8px;">
+              <label>CDN 加速域名 (可选，用于快捷复制外网访问链接)</label>
+              <input type="text" id="cdn-domain-a" placeholder="例如: assets-dev.dongvoyage.cn (无需写 https://)">
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+              <span id="feedback-a" style="font-size:11px;"></span>
+              <button id="btn-test-a" class="btn btn-secondary btn-sm">🔌 测试连接</button>
+            </div>
+          </div>
+
+          <!-- Bucket B (目标端) -->
+          <div class="config-card">
+            <div class="config-card-header">
+              <span>🎯 Bucket B (目标端)</span>
+              <button id="btn-copy-from-a" class="btn btn-secondary btn-sm" title="一键复制 A 的凭据">📋 复用 A 凭证</button>
+            </div>
+
+            <!-- 认证模式切换 -->
+            <div class="auth-tabs" id="tabs-b">
+              <button type="button" class="auth-tab-btn active" data-which="b" data-tab="ak">🔑 AK 密钥</button>
+              <button type="button" class="auth-tab-btn" data-which="b" data-tab="account">👤 账号登录</button>
+              <button type="button" class="auth-tab-btn" data-which="b" data-tab="code">📋 授权码</button>
+            </div>
+
+            <!-- Tab 1: AK 登录 -->
+            <div id="pane-b-ak" class="auth-pane active">
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-b" placeholder="例如: oss-cn-hangzhou.aliyuncs.com">
+              </div>
+              <div class="form-group">
+                <label>AccessKey ID</label>
+                <input type="text" id="ak-b" placeholder="阿里云 AccessKey ID" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label>AccessKey Secret</label>
+                <div class="input-with-action">
+                  <input type="password" id="sk-b" placeholder="阿里云 AccessKey Secret" autocomplete="off">
+                  <button type="button" id="toggle-sk-b" class="btn btn-secondary btn-sm">👁️</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <input type="text" id="bucket-b" placeholder="例如: my-target-bucket">
+              </div>
+            </div>
+
+            <!-- Tab 2: 账号登录 (免 AK / RAM 子账号 / 扫码) -->
+            <div id="pane-b-account" class="auth-pane">
+              <div class="auth-status-card">
+                <div class="auth-status-header">
+                  <span id="account-status-badge-b" class="status-badge status-DIFF">等待发起登录</span>
+                  <button type="button" id="btn-open-login-b" class="btn btn-primary btn-sm">🔗 打开阿里云登录窗口</button>
+                </div>
+                <p id="account-status-msg-b" class="auth-status-tip">支持 RAM 子账号密码、钉钉/微信/阿里云 App 扫码登录，完成后自动捕获并解密临时访问凭证。</p>
+              </div>
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-b-acc" placeholder="例如: oss-cn-hangzhou.aliyuncs.com" value="oss-cn-hangzhou.aliyuncs.com">
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <div class="input-with-action">
+                  <input type="text" id="bucket-b-acc" placeholder="输入 Bucket 名称或点击右侧获取">
+                  <button type="button" id="btn-list-buckets-b" class="btn btn-secondary btn-sm" title="读取该账号下所有 Bucket">🔍 获取列表</button>
+                </div>
+                <select id="bucket-select-b" class="select-bucket-dropdown" style="display:none; margin-top:4px;"></select>
+              </div>
+            </div>
+
+            <!-- Tab 3: 授权码登录 -->
+            <div id="pane-b-code" class="auth-pane">
+              <div class="form-group">
+                <label>粘贴阿里云授权码 (Base64 或 JSON)</label>
+                <textarea id="authcode-input-b" class="auth-code-input" placeholder="在此粘贴在 oss-browser 或阿里云控制台生成的授权码..."></textarea>
+                <button type="button" id="btn-parse-code-b" class="btn btn-secondary btn-sm" style="margin-top:4px;">⚡ 解析并填充</button>
+              </div>
+              <div class="form-group">
+                <label>地域 Endpoint</label>
+                <input type="text" id="endpoint-b-code" placeholder="自动解析回显">
+              </div>
+              <div class="form-group">
+                <label>Bucket 名称</label>
+                <input type="text" id="bucket-b-code" placeholder="自动解析回显">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 8px;">
+              <label>CDN 加速域名 (可选，若配置优先用于复制外网链接)</label>
+              <input type="text" id="cdn-domain-b" placeholder="例如: assets.dongvoyage.cn (无需写 https://)">
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+              <span id="feedback-b" style="font-size:11px;"></span>
+              <button id="btn-test-b" class="btn btn-secondary btn-sm">🔌 测试连接</button>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Sync Directories Config -->
+        <div class="config-card">
+          <div class="config-card-header">
+            <span>🛡️ 生效中的同步目录白名单（仅这些目录对外可见并可操作）</span>
+          </div>
+          <div id="sync-dirs-box" class="sync-dirs-box"></div>
+          <div class="input-with-action">
+            <input type="text" id="new-sync-dir-input" placeholder="输入目录名，例如: images/ 或 static/assets/ (支持回车添加)">
+            <button id="btn-add-sync-dir" class="btn btn-secondary">➕ 添加目录</button>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="modal-footer">
+        <button id="btn-cancel-config" class="btn btn-secondary">取消</button>
+        <button id="btn-save-config" class="btn btn-primary">💾 保存并进入工作台</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File ACL Permission Modal Dialog -->
+  <div id="modal-acl" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 580px;">
+      <div class="modal-header">
+        <h2>读写权限</h2>
+        <button id="btn-close-acl" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 24px 28px;">
+        <div class="acl-form-row">
+          <span class="acl-label">授权文件:</span>
+          <div class="acl-file-info">
+            <span class="acl-file-icon">📄</span>
+            <span id="acl-file-name" class="acl-file-name">loading...</span>
+          </div>
+        </div>
+
+        <div class="acl-form-row" style="margin-top: 20px; align-items: flex-start;">
+          <span class="acl-label"><span style="color: #ef4444;">* </span>读写权限:</span>
+          <div class="acl-options-container">
+            <div class="acl-btn-group" id="acl-btn-group">
+              <button type="button" class="acl-pill active" data-val="default">继承Bucket</button>
+              <button type="button" class="acl-pill" data-val="private">私有</button>
+              <button type="button" class="acl-pill" data-val="public-read">公共读 <span class="info-circle" title="任何人均可读，仅拥有者可写">ℹ️</span></button>
+              <button type="button" class="acl-pill" data-val="public-read-write">公共读写 <span class="info-circle" title="任何人均可读写，请谨慎使用">ℹ️</span></button>
+            </div>
+            <p id="acl-desc" class="acl-desc">描述&nbsp;&nbsp;文件ACL权限将继承所在Bucket的ACL权限</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: flex-end; gap: 12px;">
+        <button type="button" id="btn-confirm-acl" class="btn btn-primary" style="min-width: 96px;">确认授权</button>
+        <button type="button" id="btn-cancel-acl" class="btn btn-secondary" style="min-width: 72px;">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Fullscreen Preview Modal -->
+  <div id="modal-preview" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 900px; background: #0b0f19;">
+      <div class="modal-header">
+        <h2 id="preview-title">图片大图预览</h2>
+        <button id="btn-close-preview" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body preview-img-container">
+        <img id="preview-img" src="" alt="Preview">
+      </div>
+    </div>
+  </div>
+
+  <!-- Copy Public / Signed URL Selection Modal Dialog -->
+  <div id="modal-copy-url" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 660px;">
+      <div class="modal-header">
+        <h2>🔗 获取地址</h2>
+        <button id="btn-close-copy-url" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div class="copy-url-file-header">
+          <span class="file-icon">📄</span>
+          <span id="copy-url-file-name" class="copy-url-file-name">loading...</span>
+        </div>
+
+        <!-- 签名与有效期控制面板 (参照阿里云 oss-browser 2 设计) -->
+        <div class="copy-url-controls-card">
+          <div class="copy-url-control-row">
+            <label class="control-label" for="copy-url-expires-input">链接有效期:</label>
+            <div class="control-input-group">
+              <input type="number" id="copy-url-expires-input" class="form-input expires-input" value="3600" min="1" max="604800">
+              <span class="input-unit">秒</span>
+              <div class="expires-presets">
+                <button type="button" class="preset-pill active" data-sec="3600">1小时</button>
+                <button type="button" class="preset-pill" data-sec="86400">1天</button>
+                <button type="button" class="preset-pill" data-sec="604800">7天</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="copy-url-control-row" style="margin-top: 10px;">
+            <label class="control-label">
+              签名 <span class="info-circle" title="如果文件或Bucket是私有（Private）权限，必须开启签名生成带临时授权有效期的链接才能免密访问；若为公共读则可选择不签名">ℹ️</span>:
+            </label>
+            <div class="control-radio-group">
+              <label class="radio-label">
+                <input type="radio" name="copy-url-sign-option" value="1" checked>
+                <span>是 <span class="radio-hint">(私有文件亦可访问)</span></span>
+              </label>
+              <label class="radio-label">
+                <input type="radio" name="copy-url-sign-option" value="0">
+                <span>否 <span class="radio-hint">(原生未签名直链)</span></span>
+              </label>
+            </div>
+            <button type="button" id="btn-generate-signed-url" class="btn btn-primary btn-sm btn-generate-now">⚡ 生成</button>
+          </div>
+        </div>
+
+        <div id="copy-url-options-list" class="copy-url-options" style="margin-top: 14px;">
+          <!-- 动态渲染 Bucket A 与 Bucket B 的 CDN / OSS 访问链接 -->
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: flex-end;">
+        <button type="button" id="btn-cancel-copy-url" class="btn btn-secondary" style="min-width: 72px;">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diff Sync Direction Modal Dialog -->
+  <div id="modal-diff-sync" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 640px;">
+      <div class="modal-header">
+        <h2>🔄 解决文件内容差异</h2>
+        <button id="btn-close-diff-sync" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div class="diff-file-header">
+          <span class="file-icon">📄</span>
+          <span id="diff-sync-file-name" class="diff-file-name">loading...</span>
+        </div>
+        <p class="diff-tip">该文件在 A 端和 B 端均存在，但<strong>文件大小或内容哈希不一致</strong>。请选择以哪一端为基准执行覆盖同步：</p>
+
+        <div class="diff-compare-cards">
+          <!-- Bucket A Card -->
+          <div class="diff-bucket-card" id="diff-card-a">
+            <div class="diff-bucket-card-header">
+              <span class="diff-bucket-badge badge-a">Bucket A (源端)</span>
+              <span class="diff-bucket-name" id="diff-bname-a">A</span>
+            </div>
+            <div class="diff-bucket-props">
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">文件大小：</span>
+                <span class="diff-prop-value" id="diff-size-a">-</span>
+              </div>
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">修改时间：</span>
+                <span class="diff-prop-value" id="diff-time-a">-</span>
+              </div>
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">MD5 / ETag：</span>
+                <span class="diff-prop-value mono" id="diff-etag-a">-</span>
+              </div>
+            </div>
+            <button type="button" class="btn btn-primary diff-sync-action-btn" id="btn-diff-sync-a">
+              ➡️ 以 A 为准同步到 B <small>(覆盖 B 端)</small>
+            </button>
+          </div>
+
+          <!-- Bucket B Card -->
+          <div class="diff-bucket-card" id="diff-card-b">
+            <div class="diff-bucket-card-header">
+              <span class="diff-bucket-badge badge-b">Bucket B (目标端)</span>
+              <span class="diff-bucket-name" id="diff-bname-b">B</span>
+            </div>
+            <div class="diff-bucket-props">
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">文件大小：</span>
+                <span class="diff-prop-value" id="diff-size-b">-</span>
+              </div>
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">修改时间：</span>
+                <span class="diff-prop-value" id="diff-time-b">-</span>
+              </div>
+              <div class="diff-prop-item">
+                <span class="diff-prop-label">MD5 / ETag：</span>
+                <span class="diff-prop-value mono" id="diff-etag-b">-</span>
+              </div>
+            </div>
+            <button type="button" class="btn btn-secondary diff-sync-action-btn" id="btn-diff-sync-b">
+              ⬅️ 以 B 为准同步到 A <small>(覆盖 A 端)</small>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: flex-end;">
+        <button type="button" id="btn-cancel-diff-sync" class="btn btn-secondary" style="min-width: 72px;">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Subdirectory Modal Dialog -->
+  <div id="modal-new-dir" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 500px;">
+      <div class="modal-header">
+        <h2>📁 新建目录</h2>
+        <button id="btn-close-new-dir" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div class="form-row-vertical">
+          <label class="form-label" style="font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; display: block;">
+            当前上级路径:
+          </label>
+          <div class="new-dir-path-badge" id="new-dir-parent-path">
+            📂 static/images/
+          </div>
+        </div>
+
+        <div class="form-row-vertical" style="margin-top: 16px;">
+          <label class="form-label" for="input-new-dir-name" style="font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px; display: block;">
+            子目录名称 <span style="color: var(--danger);">*</span>
+          </label>
+          <input type="text" id="input-new-dir-name" class="form-input" placeholder="例如: banners 或 2026/09" autocomplete="off" style="width: 100%;">
+          <p class="form-tip" style="margin-top: 8px; font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+            提示：支持多级子目录（如 <code>test/sub/</code>），创建后将在 Bucket A 与 Bucket B 中双端同步建立。
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: flex-end; gap: 10px;">
+        <button type="button" id="btn-cancel-new-dir" class="btn btn-secondary" style="min-width: 72px;">取消</button>
+        <button type="button" id="btn-confirm-new-dir" class="btn btn-primary" style="min-width: 96px;">📁 确定创建</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Delete File/Directory Modal Dialog -->
+  <div id="modal-confirm-delete" class="modal-backdrop">
+    <div class="modal-dialog" style="max-width: 520px;">
+      <div class="modal-header">
+        <h2 id="delete-modal-title" style="color: #f87171;">🗑️ 彻底删除文件</h2>
+        <button id="btn-close-delete-modal" class="btn-close">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 20px 24px;">
+        <div class="delete-warning-box">
+          <span class="warning-icon">⚠️</span>
+          <div class="warning-text" id="delete-warning-text">
+            <strong>危险操作提醒：</strong> 此操作将同时从 <strong>Bucket A (源端)</strong> 与 <strong>Bucket B (目标端)</strong> 中双端彻底删除该文件，<strong>操作不可逆且无法找回</strong>！
+          </div>
+        </div>
+
+        <div class="delete-target-info">
+          <div class="delete-info-row">
+            <span class="info-label" id="delete-info-type-label">目标文件:</span>
+            <span class="info-val strong" id="delete-target-name">loading...</span>
+          </div>
+          <div class="delete-info-row">
+            <span class="info-label">完整路径:</span>
+            <span class="info-val mono" id="delete-target-key">loading...</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content: flex-end; gap: 10px;">
+        <button type="button" id="btn-cancel-delete-modal" class="btn btn-secondary" style="min-width: 72px;">取消</button>
+        <button type="button" id="btn-confirm-delete-action" class="btn btn-danger" style="min-width: 100px;">🗑️ 彻底删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Message -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
