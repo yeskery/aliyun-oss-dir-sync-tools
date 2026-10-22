@@ -2082,21 +2082,34 @@
     els.btnCopyFromA.addEventListener('click', () => {
       const cfgA = getActiveBucketConfig('a');
       const tab = cfgA.auth_type;
+
+      // 保留 B 端原有的 Bucket 名称（用户在 B 端任意 Tab 输入或保存过的 Bucket 名称）
+      const existingBucketB = (els.bucketBAcc ? els.bucketBAcc.value.trim() : '') ||
+                             (els.bucketB ? els.bucketB.value.trim() : '') ||
+                             (els.bucketBCode ? els.bucketBCode.value.trim() : '');
+
       switchAuthTab('b', tab);
       if (tab === 'ak') {
         els.akB.value = els.akA.value;
         els.skB.value = els.skA.value;
         els.endpointB.value = els.endpointA.value;
-        els.bucketB.value = els.bucketA.value;
+        // 仅保留 B 自身输入的 Bucket 名称，绝不覆盖为 A 端的 Bucket 名称
+        if (!els.bucketB.value.trim() && existingBucketB) {
+          els.bucketB.value = existingBucketB;
+        }
       } else if (tab === 'account') {
         authState.b.ak = authState.a.ak;
         authState.b.sk = authState.a.sk;
         authState.b.securityToken = authState.a.securityToken;
         els.endpointBAcc.value = els.endpointAAcc.value;
-        els.bucketBAcc.value = els.bucketAAcc.value;
+        // 仅保留 B 自身输入的 Bucket 名称，绝不覆盖为 A 端的 Bucket 名称
+        if (!els.bucketBAcc.value.trim() && existingBucketB) {
+          els.bucketBAcc.value = existingBucketB;
+        }
         els.accBadgeB.className = els.accBadgeA.className;
         els.accBadgeB.textContent = els.accBadgeA.textContent;
         els.accMsgB.textContent = els.accMsgA.textContent;
+        if (els.btnOpenLoginB) els.btnOpenLoginB.textContent = '🔄 重新登录刷新凭据';
         listBuckets('b', true);
       } else if (tab === 'code') {
         authState.b.ak = authState.a.ak;
@@ -2104,12 +2117,13 @@
         authState.b.securityToken = authState.a.securityToken;
         els.authcodeInputB.value = els.authcodeInputA.value;
         els.endpointBCode.value = els.endpointACode.value;
-        els.bucketBCode.value = els.bucketACode.value;
+        // 仅保留 B 自身输入的 Bucket 名称，绝不覆盖为 A 端的 Bucket 名称
+        if (!els.bucketBCode.value.trim() && existingBucketB) {
+          els.bucketBCode.value = existingBucketB;
+        }
       }
-      if (els.cdnDomainA && els.cdnDomainB) {
-        els.cdnDomainB.value = els.cdnDomainA.value;
-      }
-      showToast('已复制 A 端凭据配置', 'info');
+      // 注意：严格遵循用户要求，不复制 A 端的 CDN 加速域名，保留 B 端原有的 CDN 配置
+      showToast('已复用 A 端访问凭据 (保留 B 端 Bucket 与 CDN 配置)', 'info');
     });
 
     els.btnTestA.addEventListener('click', () => testBucketConn('a'));
