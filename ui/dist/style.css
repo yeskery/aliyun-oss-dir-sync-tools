@@ -571,6 +571,11 @@ body {
   font-weight: 600;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.15s;
+}
+.status-badge:hover {
+  opacity: 0.85;
 }
 .status-SYNCED { background: var(--success-bg); color: #34d399; }
 .status-ONLY_A { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }

@@ -3,6 +3,8 @@
 package platform
 
 import (
+	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,11 +56,19 @@ func GetScreenSize() (width, height int) {
 	return int(w), int(h)
 }
 
-// CalculateCenterPosition 计算指定宽高窗口居中放置的左上角 (x, y) 坐标
+// KillProcessTree 强行彻底终结目标 PID 及其所有子进程树 (避免 Chrome/Edge 残留锁定)
+func KillProcessTree(pid int) {
+	if pid <= 0 {
+		return
+	}
+	_ = exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
+}
+
+// CalculateCenterPosition 计算指定宽高窗口居中放置的左上角 (x, y) 坐标 (略向上偏移避免压底)
 func CalculateCenterPosition(winWidth, winHeight int) (x, y int) {
 	sw, sh := GetScreenSize()
 	x = (sw - winWidth) / 2
-	y = (sh - winHeight) / 2
+	y = (sh - winHeight) / 2 - 40
 	if x < 0 {
 		x = 0
 	}
@@ -121,7 +131,7 @@ func ForceWindowToFront(hwnd uintptr) {
 	})
 }
 
-// CenterWindow 将窗口物理移动到主屏幕居中位置，优先保持窗口自身实际大小（避免高 DPI 缩放下被压小）
+// CenterWindow 将窗口物理移动到主屏幕居中位置，优先保持窗口自身实际大小并居中展示
 func CenterWindow(hwnd uintptr, targetW, targetH int) {
 	sw, sh := GetScreenSize()
 
@@ -129,7 +139,6 @@ func CenterWindow(hwnd uintptr, targetW, targetH int) {
 	ret, _, _ := procGetWindowRect.Call(hwnd, uintptr(unsafe.Pointer(&rect)))
 
 	const (
-		SWP_NOSIZE     = 0x0001
 		SWP_NOZORDER   = 0x0004
 		SWP_SHOWWINDOW = 0x0040
 		SW_RESTORE     = 9
@@ -137,42 +146,35 @@ func CenterWindow(hwnd uintptr, targetW, targetH int) {
 
 	procShowWindow.Call(hwnd, SW_RESTORE)
 
+	w := targetW
+	h := targetH
 	if ret != 0 {
-		w := int(rect.Right - rect.Left)
-		h := int(rect.Bottom - rect.Top)
-		// 如果窗口已经具备正常尺寸，保持当前尺寸居中（SWP_NOSIZE），杜绝高 DPI 下窗口被强行压小
-		if w > 300 && h > 200 {
-			posX := (sw - w) / 2
-			posY := (sh - h) / 2
-			if posX < 0 {
-				posX = 0
-			}
-			if posY < 0 {
-				posY = 0
-			}
-			procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), 0, 0, SWP_NOSIZE|SWP_NOZORDER|SWP_SHOWWINDOW)
-			return
+		curW := int(rect.Right - rect.Left)
+		curH := int(rect.Bottom - rect.Top)
+		if curW > 300 && curH > 200 {
+			w = curW
+			h = curH
 		}
 	}
 
-	// 降级兜底：如果尚未取得窗口实际尺寸，使用默认目标尺寸
-	posX := (sw - targetW) / 2
-	posY := (sh - targetH) / 2
+	posX := (sw - w) / 2
+	posY := (sh - h) / 2 - 40
 	if posX < 0 {
 		posX = 0
 	}
 	if posY < 0 {
 		posY = 0
 	}
-	procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), uintptr(targetW), uintptr(targetH), SWP_NOZORDER|SWP_SHOWWINDOW)
+
+	procSetWindowPos.Call(hwnd, 0, uintptr(posX), uintptr(posY), uintptr(w), uintptr(h), SWP_NOZORDER|SWP_SHOWWINDOW)
 }
 
 // CenterAndBringWindowToFront 寻找指定 PID 或包含指定关键字的窗口，将其物理居中并赋予焦点
 func CenterAndBringWindowToFront(pid int, titleKeyword string, targetW, targetH int) {
 	go func() {
-		// 在 4.5 秒内每隔 150ms 进行轮询检测，直到窗口创建并完成居中弹出
+		// 在 6 秒内每隔 150ms 进行轮询检测，直到目标窗口创建并完成居中弹出
 		matchedCount := 0
-		for i := 0; i < 30; i++ {
+		for i := 0; i < 40; i++ {
 			time.Sleep(150 * time.Millisecond)
 
 			cb := syscall.NewCallback(func(hwnd syscall.Handle, lParam uintptr) uintptr {
@@ -189,6 +191,11 @@ func CenterAndBringWindowToFront(pid int, titleKeyword string, targetW, targetH 
 					title = syscall.UTF16ToString(buf)
 				}
 
+				// 严谨排除自身的主程序窗口，防止把主窗口误判为弹出的登录窗口！
+				if strings.Contains(title, "OSS 双 Bucket 可视化文件工作台") {
+					return 1
+				}
+
 				var wPid uint32
 				procGetWindowThreadProcessId.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&wPid)))
 
@@ -197,8 +204,19 @@ func CenterAndBringWindowToFront(pid int, titleKeyword string, targetW, targetH 
 					matched = true
 				}
 
-				if !matched && titleKeyword != "" && strings.Contains(title, titleKeyword) {
-					matched = true
+				if !matched && titleKeyword != "" {
+					// 针对登录窗口的多种可能标题进行匹配
+					if titleKeyword == "阿里云" {
+						if strings.Contains(title, "阿里云") ||
+							strings.Contains(title, "统一登录") ||
+							strings.Contains(title, "account.aliyun.com") ||
+							strings.Contains(title, "Sign In") ||
+							strings.Contains(title, "登录") {
+							matched = true
+						}
+					} else if strings.Contains(title, titleKeyword) {
+						matched = true
+					}
 				}
 
 				if matched {

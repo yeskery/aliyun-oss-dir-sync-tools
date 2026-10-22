@@ -19,7 +19,9 @@
     btnDeleteCurrDir: document.getElementById('btn-delete-curr-dir'),
     btnNewDir: document.getElementById('btn-new-dir'),
     btnUpload: document.getElementById('btn-upload'),
+    btnUploadFolder: document.getElementById('btn-upload-folder'),
     fileInput: document.getElementById('file-input'),
+    folderInput: document.getElementById('folder-input'),
     searchInput: document.getElementById('search-input'),
     btnViewGrid: document.getElementById('btn-view-grid'),
     btnViewList: document.getElementById('btn-view-list'),
@@ -231,11 +233,17 @@
       lower.includes('signaturedoesnotmatch') ||
       lower.includes('accessdenied') ||
       lower.includes('the access key id does not exist') ||
+      lower.includes('expired') ||
       lower.includes('过期') ||
       lower.includes('失效') ||
       lower.includes('鉴权失败');
 
     if (isExpired) {
+      if (systemStatus) {
+        systemStatus.auth_expired = true;
+        systemStatus.auth_message = msg;
+      }
+      updateStatusBadge();
       showReloginBanner(msg);
       return true;
     }
@@ -299,15 +307,31 @@
   }
 
   function updateStatusBadge() {
-    if (systemStatus && systemStatus.configured) {
-      const aName = systemStatus.bucket_a.bucket_name || 'A';
-      const bName = systemStatus.bucket_b.bucket_name || 'B';
-      els.statusBadge.className = 'status-badge status-SYNCED';
-      els.statusBadge.textContent = `🟢 已连接: ${aName} ⇋ ${bName}`;
-    } else {
+    if (!systemStatus || !systemStatus.configured) {
       els.statusBadge.className = 'status-badge status-DIFF';
       els.statusBadge.textContent = '🟠 存储桶待配置';
+      els.statusBadge.style.cursor = 'pointer';
+      els.statusBadge.onclick = openConfigModal;
+      return;
     }
+
+    if (systemStatus.auth_expired) {
+      els.statusBadge.className = 'status-badge status-DIFF';
+      els.statusBadge.textContent = '🔴 凭据已失效 (点击重新登录)';
+      els.statusBadge.title = systemStatus.auth_message || '阿里云访问凭证已失效，点击打开配置重新登录';
+      els.statusBadge.style.cursor = 'pointer';
+      els.statusBadge.onclick = openConfigModal;
+      showReloginBanner(systemStatus.auth_message);
+      return;
+    }
+
+    const aName = systemStatus.bucket_a.bucket_name || 'A';
+    const bName = systemStatus.bucket_b.bucket_name || 'B';
+    els.statusBadge.className = 'status-badge status-SYNCED';
+    els.statusBadge.textContent = `🟢 已连接: ${aName} ⇋ ${bName}`;
+    els.statusBadge.title = '双端存储桶已连接，点击可管理配置';
+    els.statusBadge.style.cursor = 'pointer';
+    els.statusBadge.onclick = openConfigModal;
   }
 
   // 旋转刷新图标工具函数
@@ -1135,7 +1159,7 @@
     }
   }
 
-  // 4. 拖拽上传与覆盖实现
+  // 4. 拖拽上传与文件夹递归解析实现
   function setupDragAndDrop() {
     window.addEventListener('dragenter', (e) => {
       e.preventDefault();
@@ -1159,62 +1183,180 @@
       }
     });
 
-    window.addEventListener('drop', (e) => {
+    window.addEventListener('drop', async (e) => {
       e.preventDefault();
       dragCounter = 0;
       els.dropOverlay.classList.remove('active');
 
+      const items = e.dataTransfer && e.dataTransfer.items;
+      if (items && items.length > 0) {
+        try {
+          const fileEntries = await scanDroppedItems(items);
+          if (fileEntries.length > 0) {
+            uploadFileEntries(fileEntries);
+            return;
+          }
+        } catch (err) {
+          console.warn('扫描拖拽项异常，降级普通文件处理:', err);
+        }
+      }
+
       if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        handleUploadFiles(e.dataTransfer.files);
+        const fileEntries = Array.from(e.dataTransfer.files).map(f => ({ file: f, relPath: f.name }));
+        uploadFileEntries(fileEntries);
       }
     });
 
-    // 按钮选择上传
+    // 按钮选择文件上传
     els.btnUpload.addEventListener('click', () => {
       els.fileInput.click();
     });
 
     els.fileInput.addEventListener('change', (e) => {
       if (e.target.files && e.target.files.length > 0) {
-        handleUploadFiles(e.target.files);
+        const fileEntries = Array.from(e.target.files).map(f => ({ file: f, relPath: f.name }));
+        uploadFileEntries(fileEntries);
         e.target.value = '';
       }
     });
+
+    // 按钮选择文件夹上传
+    if (els.btnUploadFolder && els.folderInput) {
+      els.btnUploadFolder.addEventListener('click', () => {
+        els.folderInput.click();
+      });
+
+      els.folderInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+          const fileEntries = Array.from(e.target.files).map(f => ({
+            file: f,
+            relPath: f.webkitRelativePath || f.name
+          }));
+          uploadFileEntries(fileEntries);
+          e.target.value = '';
+        }
+      });
+    }
   }
 
-  // 执行上传
-  async function handleUploadFiles(files) {
+  // 递归扫描拖拽放入的所有文件及子文件夹
+  async function scanDroppedItems(items) {
+    const results = [];
+    const queue = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        if (typeof item.webkitGetAsEntry === 'function') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            queue.push({ entry, path: '' });
+            continue;
+          }
+        }
+        const f = item.getAsFile();
+        if (f) results.push({ file: f, relPath: f.name });
+      }
+    }
+
+    while (queue.length > 0) {
+      const { entry, path } = queue.shift();
+      if (entry.isFile) {
+        const f = await new Promise((res) => entry.file(res, () => res(null)));
+        if (f) {
+          results.push({ file: f, relPath: path ? `${path}/${f.name}` : f.name });
+        }
+      } else if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const dirPath = path ? `${path}/${entry.name}` : entry.name;
+        const subEntries = await new Promise((res) => {
+          let all = [];
+          function readNext() {
+            dirReader.readEntries((entries) => {
+              if (!entries || !entries.length) {
+                res(all);
+              } else {
+                all = all.concat(Array.from(entries));
+                readNext();
+              }
+            }, () => res(all));
+          }
+          readNext();
+        });
+
+        if (subEntries.length === 0) {
+          // 空文件夹，在 OSS 中保留一个以 / 结尾的目录占位对象
+          results.push({ file: new Blob([]), relPath: `${dirPath}/`, isDir: true });
+        } else {
+          for (const child of subEntries) {
+            queue.push({ entry: child, path: dirPath });
+          }
+        }
+      }
+    }
+    return results;
+  }
+
+  // 统一分批执行文件/文件夹上传
+  async function uploadFileEntries(fileEntries) {
     if (!currentDir) {
       showToast('请先点击进入具体的同步目录（如 images/），再进行上传', 'warning');
       return;
     }
-
-    const formData = new FormData();
-    formData.append('dir', currentDir);
-    for (let i = 0; i < files.length; i++) {
-      formData.append('files', files[i]);
+    if (!fileEntries || fileEntries.length === 0) {
+      showToast('未选择任何有效文件', 'warning');
+      return;
     }
 
-    showToast(`正在双端并发上传并覆盖 ${files.length} 个文件...`, 'info');
+    const total = fileEntries.length;
+    showToast(`正在双端并发上传并覆盖 ${total} 个文件 (保留完整文件夹层级)...`, 'info');
 
-    try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-      if (data.success) {
-        showToast(data.message, 'success');
-        loadDirectory(currentDir);
-      } else {
-        checkIfTokenExpired(data.message);
-        showToast('上传出现错误: ' + data.message, 'error');
-        loadDirectory(currentDir);
+    // 分批次上传（每批最多 30 个文件，杜绝单次 payload 过大导致 Failed to fetch）
+    const BATCH_SIZE = 30;
+    let uploadedTotal = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < total; i += BATCH_SIZE) {
+      const batch = fileEntries.slice(i, i + BATCH_SIZE);
+      const formData = new FormData();
+      formData.append('dir', currentDir);
+      for (const item of batch) {
+        formData.append('files', item.file, item.relPath);
       }
-    } catch (e) {
-      checkIfTokenExpired(e.message);
-      showToast('上传请求异常: ' + e.message, 'error');
+
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+          uploadedTotal += batch.length;
+        } else {
+          failCount += batch.length;
+          checkIfTokenExpired(data.message);
+          showToast(data.message || '部分文件上传失败', 'error');
+        }
+      } catch (err) {
+        failCount += batch.length;
+        checkIfTokenExpired(err.message);
+        showToast('上传批次网络异常: ' + err.message, 'error');
+      }
     }
+
+    if (failCount === 0) {
+      showToast(`✅ 全部 ${uploadedTotal} 个文件及子文件夹已成功双端上传覆盖！`, 'success');
+    } else {
+      showToast(`上传结束: 成功 ${uploadedTotal} 个，失败 ${failCount} 个`, 'warning');
+    }
+
+    loadDirectory(currentDir);
+  }
+
+  // 兼容调用
+  async function handleUploadFiles(files) {
+    const fileEntries = Array.from(files).map(f => ({ file: f, relPath: f.name }));
+    return uploadFileEntries(fileEntries);
   }
 
   // 5. 彻底删除文件/文件夹交互 (应用内置原生对话框，告别浏览器自带弹窗)
@@ -1586,6 +1728,11 @@
     const msg = isA ? els.accMsgA : els.accMsgB;
     const btn = isA ? els.btnOpenLoginA : els.btnOpenLoginB;
 
+    if (authState[which].pollTimer) {
+      clearInterval(authState[which].pollTimer);
+      authState[which].pollTimer = null;
+    }
+
     if (badge) {
       badge.className = 'status-badge status-DIFF';
       badge.textContent = '⏳ 正在唤起登录...';
@@ -1612,7 +1759,10 @@
       if (msg) msg.textContent = data.message || '请在弹出窗口中完成 RAM 子账号或扫码登录...';
       showToast('已唤起阿里云登录窗口，请在弹出的浏览器中完成登录', 'info');
 
-      if (authState[which].pollTimer) clearInterval(authState[which].pollTimer);
+      // 弹窗唤起后允许再次点击重新拉起
+      setTimeout(() => {
+        if (btn) btn.disabled = false;
+      }, 1500);
 
       authState[which].pollTimer = setInterval(async () => {
         try {
@@ -1677,7 +1827,7 @@
                 badge.className = 'status-badge status-DIFF';
                 badge.textContent = '⏹️ 登录窗口已关闭';
               }
-              if (msg) msg.textContent = '若需重新登录，请点击上方按钮。';
+              if (msg) msg.textContent = '若需重新登录，请直接点击上方按钮重新打开登录窗口。';
             }
           }
         } catch (err) {
@@ -1689,6 +1839,7 @@
       if (badge) badge.textContent = '❌ 网络请求异常';
       if (msg) msg.textContent = e.message;
       if (btn) btn.disabled = false;
+      showToast('唤起登录异常: ' + e.message, 'error');
     }
   }
 

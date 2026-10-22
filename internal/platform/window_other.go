@@ -21,3 +21,8 @@ func CalculateCenterPosition(winWidth, winHeight int) (x, y int) {
 func HideConsoleWindow() {
 	// no-op
 }
+
+// KillProcessTree 非 Windows 系统下的进程清理
+func KillProcessTree(pid int) {
+	// no-op
+}

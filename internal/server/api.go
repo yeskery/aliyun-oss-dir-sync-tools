@@ -50,22 +50,30 @@ func sendJSON(w http.ResponseWriter, status int, resp JSONResponse) {
 func (h *APIHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := h.cfgManager.Get()
 	configured := h.workspace.IsConfigured()
+	authStatus := h.workspace.CheckAuthHealth()
 
 	sendJSON(w, http.StatusOK, JSONResponse{
 		Success: true,
 		Data: map[string]interface{}{
-			"configured": configured,
-			"bucket_a": map[string]string{
+			"configured":   configured,
+			"auth_valid":   authStatus.Valid,
+			"auth_expired": authStatus.Expired,
+			"auth_message": authStatus.Message,
+			"bucket_a": map[string]interface{}{
 				"name":        cfg.BucketA.Name,
 				"bucket_name": cfg.BucketA.BucketName,
 				"endpoint":    cfg.BucketA.Endpoint,
 				"cdn_domain":  cfg.BucketA.CDNDomain,
+				"auth_type":   cfg.BucketA.AuthType,
+				"has_token":   cfg.BucketA.SecurityToken != "",
 			},
-			"bucket_b": map[string]string{
+			"bucket_b": map[string]interface{}{
 				"name":        cfg.BucketB.Name,
 				"bucket_name": cfg.BucketB.BucketName,
 				"endpoint":    cfg.BucketB.Endpoint,
 				"cdn_domain":  cfg.BucketB.CDNDomain,
+				"auth_type":   cfg.BucketB.AuthType,
+				"has_token":   cfg.BucketB.SecurityToken != "",
 			},
 			"sync_dirs": cfg.SyncDirs,
 		},

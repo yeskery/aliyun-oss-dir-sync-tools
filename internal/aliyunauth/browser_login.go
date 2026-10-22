@@ -94,6 +94,7 @@ func (m *BrowserLoginManager) StartLogin(target string) (*LoginSessionInfo, erro
 			old.cancel()
 		}
 		if old.cmd != nil && old.cmd.Process != nil {
+			platform.KillProcessTree(old.cmd.Process.Pid)
 			_ = old.cmd.Process.Kill()
 		}
 		delete(m.sessions, target)
@@ -193,6 +194,7 @@ func (m *BrowserLoginManager) CancelLogin(target string) {
 			sess.cancel()
 		}
 		if sess.cmd != nil && sess.cmd.Process != nil {
+			platform.KillProcessTree(sess.cmd.Process.Pid)
 			_ = sess.cmd.Process.Kill()
 		}
 		sess.status = StatusClosed
@@ -284,6 +286,10 @@ func (m *BrowserLoginManager) runCDPMonitor(ctx context.Context, target string, 
 			m.updateSessionState(target, StatusClosed, "登录窗口已关闭", nil)
 			return
 		case <-readErrChan:
+			m.updateSessionState(target, StatusClosed, "登录窗口已关闭", nil)
+			if cmd.Process != nil {
+				platform.KillProcessTree(cmd.Process.Pid)
+			}
 			return
 		case <-ticker.C:
 			reqSeq++
@@ -313,6 +319,7 @@ func (m *BrowserLoginManager) runCDPMonitor(ctx context.Context, target string, 
 				if ticketVal != "" || aliyunidVal != "" {
 					// ⚡ 立即关闭登录浏览器窗口，秒级反馈
 					if cmd.Process != nil {
+						platform.KillProcessTree(cmd.Process.Pid)
 						_ = cmd.Process.Kill()
 					}
 

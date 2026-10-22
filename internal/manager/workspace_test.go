@@ -471,5 +471,71 @@ func TestDeleteDualDirectoryValidation(t *testing.T) {
 	}
 }
 
+func TestCheckAuthHealth(t *testing.T) {
+	ws := &WorkspaceService{}
+
+	// 未配置
+	h := ws.CheckAuthHealth()
+	if h.Valid || h.Expired {
+		t.Errorf("未配置时 Valid 或 Expired 应为 false，实际得到: %+v", h)
+	}
+
+	// 模拟已配置
+	ws.clientA = &ossclient.OSSClient{}
+	ws.clientB = &ossclient.OSSClient{}
+
+	h = ws.CheckAuthHealth()
+	if !h.Valid || h.Expired {
+		t.Errorf("正常时应 Valid=true, Expired=false，实际得到: %+v", h)
+	}
+
+	// 模拟过期错误
+	ws.RecordAuthError("Request Error: SecurityTokenExpired The security token has expired.")
+	h = ws.CheckAuthHealth()
+	if h.Valid || !h.Expired {
+		t.Errorf("记录过期错误后应 Valid=false, Expired=true，实际得到: %+v", h)
+	}
+
+	// 清除错误
+	ws.ClearAuthError()
+	h = ws.CheckAuthHealth()
+	if !h.Valid || h.Expired {
+		t.Errorf("清除错误后应恢复 Valid=true, Expired=false，实际得到: %+v", h)
+	}
+}
+
+func TestUploadDualSubfolderValidation(t *testing.T) {
+	cm, err := config.NewConfigManager("dummy_config.json")
+	if err != nil {
+		t.Fatalf("初始化配置失败: %v", err)
+	}
+
+	_ = cm.Update(config.AppConfig{
+		SyncDirs: []string{"images/", "static/"},
+	})
+
+	ws := &WorkspaceService{
+		cfgManager: cm,
+	}
+
+	// 测试带多级子目录的文件名传入，校验白名单是否能通过 (未初始化客户端时预期报错 OSS 凭据未就绪，而不是越界拦截)
+	err = ws.UploadDual("images/", "sub/deep/test.jpg", []byte("hello"))
+	if err == nil || !strings.Contains(err.Error(), "OSS 凭据未就绪") {
+		t.Errorf("多级子目录上传白名单校验未通过，期望凭据未就绪，实际得到: %v", err)
+	}
+
+	// 测试空目录创建
+	err = ws.UploadDual("static/", "new_folder/", []byte{})
+	if err == nil || !strings.Contains(err.Error(), "OSS 凭据未就绪") {
+		t.Errorf("目录占位对象上传白名单校验未通过，期望凭据未就绪，实际得到: %v", err)
+	}
+
+	// 测试越界恶意跳转目录 ../ 应当被过滤后依然受白名单保护
+	err = ws.UploadDual("images/", "../../../etc/passwd", []byte("bad"))
+	if err == nil {
+		t.Errorf("越界路径应当被拦截，但返回了 nil")
+	}
+}
+
 
 

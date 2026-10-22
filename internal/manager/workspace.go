@@ -3,6 +3,7 @@ package manager
 import (
 	"bytes"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -75,11 +76,65 @@ type DirListing struct {
 
 // WorkspaceService 负责双端文件管理与双写/双删
 type WorkspaceService struct {
-	mu         sync.RWMutex
-	cfgManager *config.ConfigManager
-	clientA    *ossclient.OSSClient
-	clientB    *ossclient.OSSClient
-	crcCache   sync.Map // 缓存对象的 CRC64，避免高频重复请求 (key: bucket:key:etag)
+	mu            sync.RWMutex
+	cfgManager    *config.ConfigManager
+	clientA       *ossclient.OSSClient
+	clientB       *ossclient.OSSClient
+	crcCache      sync.Map // 缓存对象的 CRC64，避免高频重复请求 (key: bucket:key:etag)
+	lastAuthError string
+}
+
+// AuthHealthStatus 凭据有效性健康状态
+type AuthHealthStatus struct {
+	Valid   bool   `json:"valid"`
+	Expired bool   `json:"expired"`
+	Message string `json:"message"`
+}
+
+func isAuthExpiredErr(errMsg string) bool {
+	lower := strings.ToLower(errMsg)
+	return strings.Contains(lower, "securitytokenexpired") ||
+		strings.Contains(lower, "invalidaccesskeyid") ||
+		strings.Contains(lower, "token has expired") ||
+		strings.Contains(lower, "token is expired") ||
+		strings.Contains(lower, "signaturedoesnotmatch") ||
+		strings.Contains(lower, "accessdenied") ||
+		strings.Contains(lower, "the access key id does not exist") ||
+		strings.Contains(lower, "expired") ||
+		strings.Contains(lower, "过期") ||
+		strings.Contains(lower, "失效") ||
+		strings.Contains(lower, "鉴权失败")
+}
+
+func (ws *WorkspaceService) RecordAuthError(errMsg string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	ws.lastAuthError = errMsg
+}
+
+func (ws *WorkspaceService) ClearAuthError() {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	ws.lastAuthError = ""
+}
+
+// CheckAuthHealth 检查当前凭据健康状态
+func (ws *WorkspaceService) CheckAuthHealth() AuthHealthStatus {
+	ws.mu.RLock()
+	cA := ws.clientA
+	cB := ws.clientB
+	lastErr := ws.lastAuthError
+	ws.mu.RUnlock()
+
+	if cA == nil || cB == nil {
+		return AuthHealthStatus{Valid: false, Expired: false, Message: "未配置存储桶"}
+	}
+
+	if lastErr != "" && isAuthExpiredErr(lastErr) {
+		return AuthHealthStatus{Valid: false, Expired: true, Message: lastErr}
+	}
+
+	return AuthHealthStatus{Valid: true, Expired: false, Message: "正常"}
 }
 
 // NewWorkspaceService 创建工作区服务
@@ -131,6 +186,24 @@ func (ws *WorkspaceService) ReloadClients() error {
 
 	ws.clientA = cA
 	ws.clientB = cB
+	ws.lastAuthError = ""
+
+	// 异步预检凭据可用性，快速探测是否已失效
+	go func(cliA, cliB *ossclient.OSSClient) {
+		if cliA != nil {
+			if _, _, err := cliA.ListDirectory(""); err != nil && isAuthExpiredErr(err.Error()) {
+				ws.RecordAuthError("Bucket A 凭据已失效: " + err.Error())
+				return
+			}
+		}
+		if cliB != nil {
+			if _, _, err := cliB.ListDirectory(""); err != nil && isAuthExpiredErr(err.Error()) {
+				ws.RecordAuthError("Bucket B 凭据已失效: " + err.Error())
+				return
+			}
+		}
+	}(cA, cB)
+
 	return nil
 }
 
@@ -276,11 +349,18 @@ func (ws *WorkspaceService) ListDirectory(dir string) (*DirListing, error) {
 	resB := <-chB
 
 	if resA.err != nil {
+		if isAuthExpiredErr(resA.err.Error()) {
+			ws.RecordAuthError("Bucket A (源端) 凭据已失效: " + resA.err.Error())
+		}
 		return nil, fmt.Errorf("读取 Bucket A 目录失败: %w", resA.err)
 	}
 	if resB.err != nil {
+		if isAuthExpiredErr(resB.err.Error()) {
+			ws.RecordAuthError("Bucket B (目标端) 凭据已失效: " + resB.err.Error())
+		}
 		return nil, fmt.Errorf("读取 Bucket B 目录失败: %w", resB.err)
 	}
+	ws.ClearAuthError()
 
 	// 4. 合并子目录 (去重并排序)
 	subDirMap := make(map[string]bool)
@@ -403,15 +483,24 @@ func (ws *WorkspaceService) UploadDual(dir string, filename string, data []byte)
 		cleanDir += "/"
 	}
 
-	cleanFileName := strings.TrimSpace(strings.ReplaceAll(filename, "\\", "/"))
+	isDir := strings.HasSuffix(filename, "/")
+	cleanFileName := strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(filename, "\\", "/")), "/")
 	var fullKey string
-	if cleanFileName == "" || cleanFileName == "." || cleanFileName == "/" {
+	if cleanFileName == "" || cleanFileName == "." {
 		if cleanDir == "" {
 			return fmt.Errorf("文件名或目录名无效")
 		}
 		fullKey = cleanDir
 	} else {
-		cleanFileName = filepath.Base(cleanFileName)
+		// 规范化相对路径，保留子目录结构，但杜绝 ../ 恶意逃逸
+		cleanFileName = path.Clean(cleanFileName)
+		cleanFileName = strings.TrimPrefix(cleanFileName, "/")
+		for strings.HasPrefix(cleanFileName, "../") {
+			cleanFileName = strings.TrimPrefix(cleanFileName, "../")
+		}
+		if isDir && !strings.HasSuffix(cleanFileName, "/") {
+			cleanFileName += "/"
+		}
 		fullKey = cleanDir + cleanFileName
 	}
 
@@ -453,9 +542,14 @@ func (ws *WorkspaceService) UploadDual(dir string, filename string, data []byte)
 	}
 
 	if len(errMsgs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errMsgs, "; "))
+		errStr := strings.Join(errMsgs, "; ")
+		if isAuthExpiredErr(errStr) {
+			ws.RecordAuthError(errStr)
+		}
+		return fmt.Errorf("%s", errStr)
 	}
 
+	ws.ClearAuthError()
 	return nil
 }
 
