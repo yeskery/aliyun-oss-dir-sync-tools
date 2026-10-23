@@ -36,26 +36,26 @@ $headers = @{
     "Accept" = "application/vnd.github.v3+json"
 }
 
-$releaseBody = @"
-## 🌟 阿里云 OSS 双 Bucket 可视化文件管理工作台 v1.0.1
-
-一款轻量、极速、无黑框的跨平台双端 OSS 对象存储管理客户端！
-
-### 🚀 v1.0.1 更新内容
-- **🎯 凭证复用优化**：点击「复用A凭据」时仅复制 AccessKeyID / AccessKeySecret，保留目标端原有的 Bucket 名称与 CDN 加速域名，不再误覆盖；
-- **🖥️ 登录窗口防死锁与全屏居中**：修正主窗口关闭事件逻辑，窗口关闭后可随时再次点击登录按钮唤起，登录窗口在屏幕正中央显示；
-- **🔴 凭证失效状态同步**：连接过期或失效时，顶部状态指示器清晰提示「🔴 凭据已失效 (点击重新登录)」，支持一键唤起登录框；
-- **📁 支持直接上传文件夹**：修复文件夹上传时报「Incorrect bucket name or bucket name is too long」错误，原生递归上传文件夹及内部所有子文件并自动创建前缀。
-
-### 📦 各平台下载解压即用
-- **Windows 桌面版 (含橙色图标，纯GUI无黑框)**: `aliyun-oss-sync.exe`
-- **macOS Apple Silicon 桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-arm64.zip`
-- **macOS Intel 芯片桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-intel.zip`
-- **Linux 64位桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-amd64.tar.gz`
-- **Linux ARM64 桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-arm64.tar.gz`
-- **macOS 命令行原生程序**: `aliyun-oss-sync-darwin-arm64` / `aliyun-oss-sync-darwin-amd64`
-- **Linux 命令行原生程序**: `aliyun-oss-sync-linux-amd64` / `aliyun-oss-sync-linux-arm64`
-"@
+$releaseBody = @(
+    "## 🌟 阿里云 OSS 双 Bucket 可视化文件管理工作台 v1.0.1",
+    "",
+    "一款轻量、极速、无黑框的跨平台双端 OSS 对象存储管理客户端！",
+    "",
+    "### 🚀 v1.0.1 更新内容",
+    "- **🎯 凭证复用优化**：点击「复用A凭据」时仅复制 AccessKeyID / AccessKeySecret，保留目标端原有的 Bucket 名称与 CDN 加速域名，不再误覆盖；",
+    "- **🖥️ 登录窗口防死锁与全屏居中**：修正主窗口关闭事件逻辑，窗口关闭后可随时再次点击登录按钮唤起，登录窗口在屏幕正中央显示；",
+    "- **🔴 凭证失效状态同步**：连接过期或失效时，顶部状态指示器清晰提示「🔴 凭据已失效 (点击重新登录)」，支持一键唤起登录框；",
+    "- **📁 支持直接上传文件夹**：修复文件夹上传时报「Incorrect bucket name or bucket name is too long」错误，原生递归上传文件夹及内部所有子文件并自动创建前缀。",
+    "",
+    "### 📦 各平台下载解压即用",
+    "- **Windows 桌面版 (含橙色图标，纯GUI无黑框)**: `aliyun-oss-sync.exe`",
+    "- **macOS Apple Silicon 桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-arm64.zip`",
+    "- **macOS Intel 芯片桌面版 (含橙色图标，解压得 .app)**: `Aliyun-OSS-Sync-macOS-intel.zip`",
+    "- **Linux 64位桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-amd64.tar.gz`",
+    "- **Linux ARM64 桌面分发包 (含橙色图标与快捷方式)**: `Aliyun-OSS-Sync-linux-arm64.tar.gz`",
+    "- **macOS 命令行原生程序**: `aliyun-oss-sync-darwin-arm64` / `aliyun-oss-sync-darwin-amd64`",
+    "- **Linux 命令行原生程序**: `aliyun-oss-sync-linux-amd64` / `aliyun-oss-sync-linux-arm64`"
+) -join "`n"
 
 $createReleasePayload = @{
     tag_name = $Tag
