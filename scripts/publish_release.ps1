@@ -1,9 +1,12 @@
 param(
     [Parameter(Mandatory=$false)]
     [string]$Token = $env:GITHUB_TOKEN,
-    [string]$Tag = "v1.0.0",
-    [string]$ReleaseName = "v1.0.0 阿里云 OSS 双端同步可视化文件管理工作台"
+    [string]$Tag = "v1.0.1",
+    [string]$ReleaseName = "v1.0.1 阿里云 OSS 双端同步可视化工作台 (凭据/窗口/文件夹上传升级)",
+    [string]$Proxy = "http://127.0.0.1:10808"
 )
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 if (-not $Token) {
     Write-Host "请输入您的 GitHub Personal Access Token (PAT):" -ForegroundColor Yellow
@@ -15,16 +18,13 @@ if (-not $Token) {
 }
 
 $repo = "yeskery/aliyun-oss-dir-sync-tools"
-$remoteUrl = "https://$($Token)@github.com/$repo.git"
+$remoteUrl = "https://oauth2:$($Token)@github.com/$repo.git"
 
 Write-Host "🚀 [1/3] 正在推送代码至 GitHub 仓库 ($repo)..." -ForegroundColor Cyan
-git remote remove origin 2>$null
-git remote add origin $remoteUrl
-git branch -M main
-git push -u origin main --force
+git -c credential.helper="" -c http.proxy=$Proxy push -u $remoteUrl main --force
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ 推送代码失败，请检查 Token 权限是否包含 repo！" -ForegroundColor Red
+    Write-Host "❌ 推送代码失败，请检查 Token 权限是否包含 repo 或网络代理！" -ForegroundColor Red
     exit 1
 }
 Write-Host "✅ 代码成功推送至 GitHub!" -ForegroundColor Green
@@ -37,17 +37,15 @@ $headers = @{
 }
 
 $releaseBody = @"
-## 🌟 阿里云 OSS 双 Bucket 可视化文件管理工作台 v1.0.0
+## 🌟 阿里云 OSS 双 Bucket 可视化文件管理工作台 v1.0.1
 
 一款轻量、极速、无黑框的跨平台双端 OSS 对象存储管理客户端！
 
-### 🚀 核心特性
-- **双端并发同步与实时覆盖**：支持拖拽文件/文件夹批量双写至源端与目标端；
-- **智能内容一致性对比**：支持普通上传与 Multipart 分片上传 (带 -1 ETag) 的全兼容 CRC64 内容校验；
-- **全新文件夹彻底删除**：支持子文件夹卡片快捷删除与目录工具栏「删除本目录」；
-- **全场景网格与列表切换**：支持全文件夹、全文件以及目录文件混排的完整列表表格视图；
-- **快捷复制目录路径**：一键复制当前所在的 OSS 前缀路径；
-- **带有效期与签名的外网直链复制**：支持私有 Bucket 生成防盗链临时授权 URL 与 CDN 加速链接。
+### 🚀 v1.0.1 更新内容
+- **🎯 凭证复用优化**：点击「复用A凭据」时仅复制 AccessKeyID / AccessKeySecret，保留目标端原有的 Bucket 名称与 CDN 加速域名，不再误覆盖；
+- **🖥️ 登录窗口防死锁与全屏居中**：修正主窗口关闭事件逻辑，窗口关闭后可随时再次点击登录按钮唤起，登录窗口在屏幕正中央显示；
+- **🔴 凭证失效状态同步**：连接过期或失效时，顶部状态指示器清晰提示「🔴 凭据已失效 (点击重新登录)」，支持一键唤起登录框；
+- **📁 支持直接上传文件夹**：修复文件夹上传时报「Incorrect bucket name or bucket name is too long」错误，原生递归上传文件夹及内部所有子文件并自动创建前缀。
 
 ### 📦 各平台下载解压即用
 - **Windows 桌面版 (含橙色图标，纯GUI无黑框)**: `aliyun-oss-sync.exe`
@@ -68,7 +66,18 @@ $createReleasePayload = @{
     prerelease = $false
 } | ConvertTo-Json -Depth 4
 
-$releaseRes = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($createReleasePayload)) -ContentType "application/json; charset=utf-8"
+$restParams = @{
+    Uri = "https://api.github.com/repos/$repo/releases"
+    Method = "Post"
+    Headers = $headers
+    Body = ([System.Text.Encoding]::UTF8.GetBytes($createReleasePayload))
+    ContentType = "application/json; charset=utf-8"
+}
+if ($Proxy) {
+    $restParams["Proxy"] = $Proxy
+}
+
+$releaseRes = Invoke-RestMethod @restParams
 
 $uploadUrlBase = $releaseRes.upload_url -replace "\{\?name,label\}", ""
 Write-Host "✅ Release 创建成功! ID: $($releaseRes.id)" -ForegroundColor Green
@@ -100,7 +109,17 @@ foreach ($assetPath in $assets) {
             "Content-Type" = "application/octet-stream"
         }
 
-        $null = Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers $uploadHeaders -Body $fileBytes
+        $uploadParams = @{
+            Uri = $uploadUrl
+            Method = "Post"
+            Headers = $uploadHeaders
+            Body = $fileBytes
+        }
+        if ($Proxy) {
+            $uploadParams["Proxy"] = $Proxy
+        }
+
+        $null = Invoke-RestMethod @uploadParams
         Write-Host "   ✅ $fileName 上传成功!" -ForegroundColor Green
     } else {
         Write-Host "   ⚠️ 文件不存在跳过: $assetPath" -ForegroundColor Yellow
